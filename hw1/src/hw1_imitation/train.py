@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -20,7 +21,7 @@ from hw1_imitation.data import (
     load_pusht_zarr,
 )
 from hw1_imitation.model import build_policy, PolicyType
-from hw1_imitation.evaluation import Logger
+from hw1_imitation.evaluation import Logger, evaluate_policy
 
 LOGDIR_PREFIX = "exp"
 
@@ -127,7 +128,92 @@ def run_training(config: TrainConfig) -> None:
     )
     logger = Logger(log_dir)
 
-    ### TODO: PUT YOUR MAIN TRAINING LOOP HERE ###
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config.lr,
+        weight_decay=config.weight_decay,
+    )
+
+    def train_step(state: torch.Tensor, action_chunk: torch.Tensor) -> torch.Tensor:
+        optimizer.zero_grad(set_to_none=True)
+        loss = model.compute_loss(state, action_chunk)
+        loss.backward()
+        optimizer.step()
+        return loss
+
+    if hasattr(torch, "compile"):
+        train_step = torch.compile(train_step)
+
+    step = 0
+    start_time = perf_counter()
+    logger.log(
+        {
+            "train/loss": float("nan"),
+            "train/epoch": 0,
+            "train/steps_per_sec": 0.0,
+            "eval/mean_reward": float("nan"),
+        },
+        step=step,
+    )
+
+    evaluate_policy(
+        model=model,
+        normalizer=normalizer,
+        device=device,
+        chunk_size=config.chunk_size,
+        video_size=config.video_size,
+        num_video_episodes=config.num_video_episodes,
+        flow_num_steps=config.flow_num_steps,
+        step=step,
+        logger=logger,
+    )
+
+    model.train()
+    for epoch in range(config.num_epochs):
+        for state, action_chunk in loader:
+            state = state.to(device, non_blocking=True)
+            action_chunk = action_chunk.to(device, non_blocking=True)
+
+            loss = train_step(state, action_chunk)
+            step += 1
+
+            if step % config.log_interval == 0:
+                elapsed = max(perf_counter() - start_time, 1e-6)
+                logger.log(
+                    {
+                        "train/loss": float(loss.detach().cpu().item()),
+                        "train/epoch": epoch + 1,
+                        "train/steps_per_sec": step / elapsed,
+                    },
+                    step=step,
+                )
+
+            if step % config.eval_interval == 0:
+                evaluate_policy(
+                    model=model,
+                    normalizer=normalizer,
+                    device=device,
+                    chunk_size=config.chunk_size,
+                    video_size=config.video_size,
+                    num_video_episodes=config.num_video_episodes,
+                    flow_num_steps=config.flow_num_steps,
+                    step=step,
+                    logger=logger,
+                )
+                model.train()
+
+    if step % config.eval_interval != 0:
+        evaluate_policy(
+            model=model,
+            normalizer=normalizer,
+            device=device,
+            chunk_size=config.chunk_size,
+            video_size=config.video_size,
+            num_video_episodes=config.num_video_episodes,
+            flow_num_steps=config.flow_num_steps,
+            step=step,
+            logger=logger,
+        )
 
     logger.dump_for_grading()
 
