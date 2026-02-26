@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 from datetime import datetime
 import time
@@ -14,6 +15,57 @@ from infrastructure import pytorch_util as ptu
 from infrastructure.log_utils import setup_wandb, Logger, dump_log
 
 MAX_NVIDEO = 2
+
+
+def get_hw2_root() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def get_default_logs_txt_name(env_name: str) -> str:
+    if "CartPole" in env_name:
+        return "section3_logs.txt"
+    if "HalfCheetah" in env_name:
+        return "section4_logs.txt"
+    if "LunarLander" in env_name:
+        return "section5_logs.txt"
+    if "InvertedPendulum" in env_name:
+        return "section6_logs.txt"
+    return "experiment_logs.txt"
+
+
+def get_logs_txt_path(env_name: str, logs_txt_name: str | None) -> str:
+    if logs_txt_name is None:
+        logs_txt_name = get_default_logs_txt_name(env_name)
+    if os.path.isabs(logs_txt_name):
+        return logs_txt_name
+    return os.path.join(get_hw2_root(), logs_txt_name)
+
+
+def append_run_logs_to_txt(args, exp_name: str) -> None:
+    csv_log_path = os.path.join(args.save_dir, "log.csv")
+    if not os.path.exists(csv_log_path):
+        print(f"Warning: expected log file at {csv_log_path}, skipping txt export.")
+        return
+
+    txt_log_path = get_logs_txt_path(args.env_name, args.logs_txt_name)
+    run_config = dict(vars(args))
+    run_config["save_dir"] = os.path.abspath(args.save_dir)
+
+    with open(csv_log_path, "r", encoding="utf-8") as csv_file:
+        csv_contents = csv_file.read().rstrip()
+
+    with open(txt_log_path, "a", encoding="utf-8") as txt_file:
+        txt_file.write("\n" + "=" * 88 + "\n")
+        txt_file.write(f"Experiment: {exp_name}\n")
+        txt_file.write(
+            f"Logged at: {datetime.now().isoformat(timespec='seconds')}\n"
+        )
+        txt_file.write(f"Config: {json.dumps(run_config, sort_keys=True)}\n")
+        txt_file.write("-" * 88 + "\n")
+        txt_file.write(csv_contents + "\n")
+        txt_file.write("=" * 88 + "\n")
+
+    print(f"Appended run log to {txt_log_path}")
 
 
 def run_training_loop(logger, args):
@@ -59,17 +111,22 @@ def run_training_loop(logger, args):
 
     for itr in range(args.n_iter):
         print(f"\n********** Iteration {itr} ************")
-        # TODO: sample `args.batch_size` transitions using utils.sample_trajectories
         # make sure to use `max_ep_len`
-        trajs, envsteps_this_batch = None, None
+        trajs, envsteps_this_batch = utils.sample_trajectories(
+            env, agent.actor, args.batch_size, max_ep_len
+        )
         total_envsteps += envsteps_this_batch
 
         # trajs should be a list of dictionaries of NumPy arrays, where each dictionary corresponds to a trajectory.
         # this line converts this into a single dictionary of lists of NumPy arrays.
         trajs_dict = {k: [traj[k] for traj in trajs] for k in trajs[0]}
 
-        # TODO: train the agent using the sampled trajectories and the agent's update function
-        train_info: dict = None
+        train_info: dict = agent.update(
+            trajs_dict["observation"],
+            trajs_dict["action"],
+            trajs_dict["reward"],
+            trajs_dict["terminal"],
+        )
 
         if itr % args.scalar_log_freq == 0:
             # save eval metrics
@@ -143,6 +200,17 @@ def setup_arguments(args=None):
     parser.add_argument("--which_gpu", "-gpu_id", default=0)
     parser.add_argument("--video_log_freq", type=int, default=-1)
     parser.add_argument("--scalar_log_freq", type=int, default=1)
+    parser.add_argument(
+        "--logs_txt_name",
+        type=str,
+        default=None,
+        help=(
+            "Output txt file used to append each run's csv logs. If omitted, "
+            "defaults to section3_logs.txt for CartPole, section4_logs.txt for "
+            "HalfCheetah, section5_logs.txt for LunarLander, and "
+            "section6_logs.txt for InvertedPendulum."
+        ),
+    )
 
     args = parser.parse_args(args=args)
 
@@ -162,6 +230,8 @@ def main(args):
     logger = Logger(os.path.join(args.save_dir, 'log.csv'))
 
     run_training_loop(logger, args)
+    logger.close()
+    append_run_logs_to_txt(args, exp_name)
 
 
 if __name__ == "__main__":
