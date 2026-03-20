@@ -43,7 +43,22 @@ def compute_per_token_logprobs(
     #
     # Respect enable_grad: when enable_grad=False this function should not build an
     # autograd graph.
-    raise NotImplementedError("student TODO: compute_per_token_logprobs")
+    if enable_grad:
+        out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+    else:
+        with torch.no_grad():
+            out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+
+    logits = out.logits[:, :-1, :]
+    targets = input_ids[:, 1:]
+    bsz, seq_len_minus_1, vocab_size = logits.shape
+
+    per_token_nll = F.cross_entropy(
+        logits.reshape(bsz * seq_len_minus_1, vocab_size),
+        targets.reshape(bsz * seq_len_minus_1),
+        reduction="none",
+    )
+    return -per_token_nll.reshape(bsz, seq_len_minus_1)
 
 
 def build_completion_mask(
@@ -66,7 +81,12 @@ def build_completion_mask(
     # prompt_input_len is the (padded) prompt length before completion tokens were
     # appended. You can use attention_mask to exclude padding; pad_token_id is passed
     # for convenience but a direct attention-mask-based solution is fine.
-    raise NotImplementedError("student TODO: build_completion_mask")
+    seq_len = input_ids.shape[1]
+    per_token_positions = torch.arange(seq_len - 1, device=input_ids.device)[None, :]
+    completion_start = prompt_input_len - 1
+    completion_pos_mask = per_token_positions >= completion_start
+    non_padding_mask = attention_mask[:, 1:].bool()
+    return (completion_pos_mask & non_padding_mask).float()
 
 
 def masked_sum(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
@@ -110,4 +130,6 @@ def approx_kl_from_logprobs(
     #                             = KL(p_new || p_ref).
     #
     # The clamp to [-20, 20] is for numerical stability / variance control.
-    raise NotImplementedError("student TODO: approx_kl_from_logprobs")
+    delta = (ref_logprobs - new_logprobs).clamp(min=-log_ratio_clip, max=log_ratio_clip)
+    per_token = torch.exp(delta) - delta - 1.0
+    return masked_mean(per_token, mask, eps=eps)
