@@ -1,4 +1,5 @@
-from typing import Union
+import os
+from typing import Callable, Union
 
 import torch
 from torch import nn
@@ -18,6 +19,20 @@ _str_to_activation = {
 }
 
 device = None
+
+
+def maybe_compile(fn: Callable) -> Callable:
+    """
+    Use torch.compile only when explicitly enabled.
+
+    On some local setups (notably macOS CPU without a working C++ toolchain),
+    torch.compile fails at runtime inside TorchInductor. Defaulting to eager
+    execution keeps homework code runnable everywhere.
+    """
+    use_compile = os.environ.get("CS285_USE_TORCH_COMPILE", "").lower() in {"1", "true", "yes"}
+    if use_compile and hasattr(torch, "compile"):
+        return torch.compile(fn)
+    return fn
 
 
 def build_mlp(
