@@ -74,7 +74,6 @@ class FQLAgent(nn.Module):
             )
             velocity = self.bc_actor(observation, action, t)
             action = action + dt * velocity
-        action = torch.clamp(action, -1, 1)
         return action
 
     @ptu.maybe_compile
@@ -97,7 +96,7 @@ class FQLAgent(nn.Module):
             noise = torch.randn_like(actions)
             next_actions = self.onestep_actor(next_observations, noise)
             next_actions = torch.clamp(next_actions, -1, 1)
-            next_q = self.target_critic(next_observations, next_actions).mean(dim=0)
+            next_q = self.target_critic(next_observations, next_actions).min(dim=0).values
             target_q = rewards + self.discount * (1.0 - dones.float()) * next_q
         loss = torch.mean((q - target_q[None]) ** 2)
 
@@ -155,7 +154,7 @@ class FQLAgent(nn.Module):
         distill_loss = self.alpha * torch.mean((onestep_actions - bc_actions) ** 2)
 
         # Hint: *Do* clip the one-step actor actions when feeding them to the critic
-        q_loss = -self.critic(observations, torch.clamp(onestep_actions, -1, 1)).mean()
+        q_loss = -self.critic(observations, torch.clamp(onestep_actions, -1, 1)).min(dim=0).values.mean()
 
         # Total loss.
         loss = distill_loss + q_loss

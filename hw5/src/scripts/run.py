@@ -86,6 +86,8 @@ def setup_arguments(args=None):
     parser.add_argument("--log_interval", type=int, default=10000)
     parser.add_argument("--eval_interval", type=int, default=100000)
     parser.add_argument("--num_eval_trajectories", type=int, default=25)  # Should be greater than or equal to 20 to pass autograder
+    parser.add_argument("--logdir_prefix", type=str, default="exp")
+    parser.add_argument("--wandb_mode", type=str, default="online", choices=["online", "offline", "disabled"])
 
     parser.add_argument("--expectile", type=float, default=None)
     parser.add_argument("--alpha", type=float, default=None)
@@ -101,7 +103,7 @@ def setup_arguments(args=None):
 
 def main(args):
     # Create directory for logging
-    logdir_prefix = "exp"  # Keep for autograder
+    logdir_prefix = args.logdir_prefix
 
     config = configs.configs[args.base_config](args.env_name)
 
@@ -123,7 +125,7 @@ def main(args):
         config['agent_kwargs']['alpha'] = args.alpha
         exp_name = f"{exp_name}_a{args.alpha}"
 
-    setup_wandb(project='cs285_hw5', name=exp_name, group=args.run_group, config=config)
+    setup_wandb(project='cs285_hw5', name=exp_name, group=args.run_group, config=config, mode=args.wandb_mode)
     args.save_dir = os.path.join(logdir_prefix, args.run_group, exp_name)
     os.makedirs(args.save_dir, exist_ok=True)
     train_logger = Logger(os.path.join(args.save_dir, 'train.csv'))

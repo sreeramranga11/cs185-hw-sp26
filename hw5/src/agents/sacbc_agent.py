@@ -68,7 +68,9 @@ class SACBCAgent(nn.Module):
         with torch.no_grad():
             next_dists = self.actor(next_observations)
             next_actions = next_dists.rsample()
-            next_q = self.target_critic(next_observations, next_actions).mean(dim=0)
+            next_log_probs = next_dists.log_prob(next_actions)
+            next_q = self.target_critic(next_observations, next_actions).min(dim=0).values
+            next_q = next_q - self.beta() * next_log_probs
             target_q = rewards + self.discount * (1.0 - dones.float()) * next_q
         loss = torch.mean((q - target_q[None]) ** 2)
 
@@ -95,12 +97,12 @@ class SACBCAgent(nn.Module):
         # TODO(student): Compute the actor loss
         actor_dists = self.actor(observations)
         actor_actions = actor_dists.rsample()
-        q_loss = -self.critic(observations, actor_actions).mean()
+        q_loss = -self.critic(observations, actor_actions).min(dim=0).values.mean()
 
         mses = torch.mean((actor_actions - actions) ** 2, dim=-1)
         bc_loss = self.alpha * mses.mean()
 
-        entropy_loss = self.beta() * actor_dists.log_prob(actor_actions).mean()
+        entropy_loss = self.beta().detach() * actor_dists.log_prob(actor_actions).mean()
 
         loss = q_loss + bc_loss + entropy_loss
 
@@ -128,7 +130,7 @@ class SACBCAgent(nn.Module):
         actor_actions = actor_dists.rsample()
         log_probs = actor_dists.log_prob(actor_actions)
 
-        loss = self.beta() * (-log_probs - self.target_entropy).detach().mean()
+        loss = -(self.beta.log_param * (log_probs + self.target_entropy).detach()).mean()
 
         self.beta_optimizer.zero_grad()
         loss.backward()

@@ -1,4 +1,5 @@
-from typing import Union
+import os
+from typing import Callable, Union
 
 import torch
 from torch import nn
@@ -18,6 +19,19 @@ _str_to_activation = {
 }
 
 device = None
+
+
+def maybe_compile(fn: Callable) -> Callable:
+    """
+    Use torch.compile only when explicitly enabled.
+
+    This keeps the project runnable on local setups where TorchInductor is not
+    available or is unstable.
+    """
+    use_compile = os.environ.get("CS285_USE_TORCH_COMPILE", "").lower() in {"1", "true", "yes"}
+    if use_compile and hasattr(torch, "compile"):
+        return torch.compile(fn)
+    return fn
 
 
 def build_mlp(
@@ -54,11 +68,11 @@ def build_mlp(
     in_size = input_size
     for _ in range(n_layers):
         layers.append(nn.Linear(in_size, size))
-        # TODO(student): Add layer norm
-        layers.append(activation)
+        layers.append(nn.LayerNorm(size))
+        layers.append(activation.__class__())
         in_size = size
     layers.append(nn.Linear(in_size, output_size))
-    layers.append(output_activation)
+    layers.append(output_activation.__class__())
 
     mlp = nn.Sequential(*layers)
     mlp.to(device)
@@ -102,7 +116,7 @@ def build_ensemble_mlp(
         in_size = input_size
         for _ in range(n_layers):
             layers.append(nn.Linear(in_size, size))
-            # TODO(student): Add layer norm
+            layers.append(nn.LayerNorm(size))
             layers.append(activation.__class__())   # fresh module per layer
             in_size = size
         layers.append(nn.Linear(in_size, output_size))

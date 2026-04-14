@@ -51,7 +51,7 @@ class SACBCAgent(nn.Module):
         action = self.actor(observation).base_dist.base_dist.mode.tanh()
         return ptu.to_numpy(action[0])
 
-    @torch.compile
+    @ptu.maybe_compile
     def update_q(
         self,
         observations: torch.Tensor,
@@ -63,9 +63,13 @@ class SACBCAgent(nn.Module):
         """
         Update Q(s, a)
         """
-        # TODO(student): Compute the Q loss
-        q = ...
-        loss = ...
+        q = self.critic(observations, actions)
+        with torch.no_grad():
+            next_dists = self.actor(next_observations)
+            next_actions = next_dists.rsample()
+            next_q = self.target_critic(next_observations, next_actions).mean(dim=0)
+            target_q = rewards + self.discount * (1.0 - dones.float()) * next_q
+        loss = torch.mean((q - target_q[None]) ** 2)
 
         self.critic_optimizer.zero_grad()
         loss.backward()
@@ -78,7 +82,7 @@ class SACBCAgent(nn.Module):
             "q_min": q.min(),
         }
 
-    @torch.compile
+    @ptu.maybe_compile
     def update_actor(
         self,
         observations: torch.Tensor,
@@ -87,13 +91,14 @@ class SACBCAgent(nn.Module):
         """
         Update the actor
         """
-        # TODO(student): Compute the actor loss
-        q_loss = ...
+        actor_dists = self.actor(observations)
+        actor_actions = actor_dists.rsample()
+        q_loss = -self.critic(observations, actor_actions).mean()
 
-        mses = ...
-        bc_loss = ...
+        mses = torch.mean((actor_actions - actions) ** 2, dim=-1)
+        bc_loss = self.alpha * mses.mean()
 
-        entropy_loss = ...
+        entropy_loss = self.beta() * actor_dists.log_prob(actor_actions).mean()
 
         loss = q_loss + bc_loss + entropy_loss
 
@@ -109,7 +114,7 @@ class SACBCAgent(nn.Module):
             "mse": mses.mean(),
         }
 
-    @torch.compile
+    @ptu.maybe_compile
     def update_beta(
         self,
         observations: torch.Tensor,
@@ -155,5 +160,7 @@ class SACBCAgent(nn.Module):
         return metrics
 
     def update_target_critic(self) -> None:
-        # TODO(student): Update target_critic using Polyak averaging with self.target_update_rate
-        ...
+        with torch.no_grad():
+            for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
+                target_param.data.mul_(1.0 - self.target_update_rate)
+                target_param.data.add_(self.target_update_rate * param.data)

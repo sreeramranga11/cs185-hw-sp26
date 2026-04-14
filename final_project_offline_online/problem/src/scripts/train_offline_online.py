@@ -14,20 +14,119 @@ from infrastructure.log_utils import setup_wandb, Logger, dump_log
 from infrastructure.replay_buffer import ReplayBuffer
 
 
+def _build_agent(config: dict, dataset):
+    example_batch = dataset.sample(1)
+    agent_cls = agents[config["agent"]]
+    return agent_cls(
+        example_batch["observations"].shape[1:],
+        example_batch["actions"].shape[-1],
+        **config["agent_kwargs"],
+    )
+
+
+def _to_device(batch: dict) -> dict:
+    return {
+        k: ptu.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in batch.items()
+    }
+
+
+def _evaluate(env, agent, num_eval_trajectories: int, ep_len: int) -> dict:
+    trajectories = utils.sample_n_trajectories(
+        env,
+        agent,
+        num_eval_trajectories,
+        ep_len,
+    )
+    successes = [traj["episode_statistics"]["s"] for traj in trajectories]
+    return {
+        "eval/success_rate": float(np.mean(successes)),
+    }
+
+
 def run_offline_training_loop(config: dict, train_logger, eval_logger, args: argparse.Namespace, start_step: int = 0):
     """
     Run offline training loop
     """
-    # TODO(student): Implement offline training loop
-    
-    return ...
+    env, dataset = config["make_env_and_dataset"]()
+    agent = _build_agent(config, dataset)
+    ep_len = env.spec.max_episode_steps or env.max_episode_steps
+    final_step = start_step + config["offline_training_steps"]
+
+    for step in tqdm.trange(start_step, final_step + 1, dynamic_ncols=True):
+        batch = _to_device(dataset.sample(config["batch_size"]))
+        metrics = agent.update(
+            batch["observations"],
+            batch["actions"],
+            batch["rewards"],
+            batch["next_observations"],
+            batch["dones"],
+            step,
+        )
+
+        if step % args.log_interval == 0 or step == final_step:
+            train_logger.log(metrics, step=step)
+
+        if step % args.eval_interval == 0 or step == final_step:
+            eval_logger.log(
+                _evaluate(env, agent, args.num_eval_trajectories, ep_len),
+                step=step,
+            )
+
+    return dump_log(agent, train_logger, eval_logger, config, args.save_dir)
 
 def run_online_training_loop(config: dict, train_logger, eval_logger, args: argparse.Namespace, agent_path: str, start_step: int = 0):
     """
     Run online training loop
     """
-    # TODO(student): Implement online training loop
-    return ...
+    env, dataset = config["make_env_and_dataset"]()
+    agent = _build_agent(config, dataset)
+    agent.load_state_dict(torch.load(agent_path, map_location=ptu.device))
+
+    replay_buffer = ReplayBuffer(capacity=config["replay_buffer_capacity"])
+    ep_len = env.spec.max_episode_steps or env.max_episode_steps
+    observation, _ = env.reset(seed=args.seed)
+    total_online_steps = config["online_training_steps"]
+
+    for online_step in tqdm.trange(1, total_online_steps + 1, dynamic_ncols=True):
+        step = start_step + online_step
+
+        action = agent.get_action(observation)
+        next_observation, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+
+        replay_buffer.insert(
+            observation=observation,
+            action=action,
+            reward=reward,
+            next_observation=next_observation,
+            done=done,
+        )
+
+        observation = env.reset()[0] if done else next_observation
+
+        metrics = None
+        if len(replay_buffer) >= config["batch_size"]:
+            batch = _to_device(replay_buffer.sample(config["batch_size"]))
+            metrics = agent.update(
+                batch["observations"],
+                batch["actions"],
+                batch["rewards"],
+                batch["next_observations"],
+                batch["dones"],
+                step,
+            )
+
+            if step % args.log_interval == 0 or online_step == total_online_steps:
+                train_logger.log(metrics, step=step)
+
+        if step % args.eval_interval == 0 or online_step == total_online_steps:
+            eval_logger.log(
+                _evaluate(env, agent, args.num_eval_trajectories, ep_len),
+                step=step,
+            )
+            observation, _ = env.reset()
+
+    return dump_log(agent, train_logger, eval_logger, config, args.save_dir)
 
 
 def setup_arguments(args=None):
@@ -39,6 +138,8 @@ def setup_arguments(args=None):
     parser.add_argument("--run_group", type=str, default='Debug')
     parser.add_argument("--no_gpu", action="store_true")
     parser.add_argument("--which_gpu", default=0)
+    parser.add_argument("--wandb_project", type=str, default=os.environ.get("WANDB_PROJECT", "cs185_default_project"))
+    parser.add_argument("--wandb_mode", type=str, default=os.environ.get("WANDB_MODE", "online"))
     parser.add_argument("--offline_training_steps", type=int, default=500000)  # Should be 500k to pass the autograder
     parser.add_argument("--online_training_steps", type=int, default=100000)  # Should be 100k to pass the autograder
     parser.add_argument("--replay_buffer_capacity", type=int, default=1000000)
@@ -75,6 +176,10 @@ def setup_arguments(args=None):
 
 
 def main(args):
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    ptu.init_gpu(use_gpu=not args.no_gpu, gpu_id=args.which_gpu)
+
     # Create directory for logging
     logdir_prefix = "exp"  # Keep for autograder
 
@@ -112,7 +217,13 @@ def main(args):
     if args.offline_training_steps > 0:
         exp_name = f"{exp_name}_offline"
 
-    setup_wandb(project='cs185_default_project', name=exp_name, group=args.run_group, config=config)
+    setup_wandb(
+        project=args.wandb_project,
+        name=exp_name,
+        group=args.run_group,
+        config=config,
+        mode=args.wandb_mode,
+    )
     args.save_dir = os.path.join(logdir_prefix, args.run_group, exp_name)
     os.makedirs(args.save_dir, exist_ok=True)
     train_logger = Logger(os.path.join(args.save_dir, 'train.csv'))
@@ -121,16 +232,17 @@ def main(args):
     start_step = 0
     if args.offline_training_steps > 0:
         print(f"Running offline training loop with {args.offline_training_steps} steps")
-        # TODO(student): Implement offline training loop
-        # Hint: You might consider passing the agent's path to the online training loop
-        ... = run_offline_training_loop(config, train_logger, eval_logger, args, start_step=0)
+        agent_path = run_offline_training_loop(config, train_logger, eval_logger, args, start_step=0)
         start_step = args.offline_training_steps
+    else:
+        agent_path = None
         
     
     if args.online_training_steps > 0:
         print(f"Running online training loop with {args.online_training_steps} steps")
-        # TODO(student): Implement online training loop
-        run_online_training_loop(config, train_logger, eval_logger, args, ..., start_step=start_step)
+        if agent_path is None:
+            raise ValueError("Online training requires an offline checkpoint. Set --offline_training_steps > 0.")
+        run_online_training_loop(config, train_logger, eval_logger, args, agent_path, start_step=start_step)
 
 
 if __name__ == "__main__":
