@@ -1,0 +1,2 @@
+critic/q_loss,critic/q_mean,critic/q_max,critic/q_min,bc_actor/loss,onestep_actor/total_loss,onestep_actor/distill_loss,onestep_actor/q_loss,onestep_actor/mse,step
+1.0052902698516846,0.02879650704562664,0.14688032865524292,-0.13851997256278992,1.49074125289917,3.3058245182037354,3.0891733169555664,0.2166513055562973,0.49834373593330383,0
