@@ -1,14 +1,14 @@
 q1 best-task plot logs:
   exp/q1/sd0_20260411_102320_sacbc_cube-single-play-singletask-task1-v0_a100.0/eval.csv
-  exp/q1/sd0_20260408_211921_sacbc_antsoccer-arena-navigate-singletask-task1-v0_a300.0/eval.csv
+  exp/q1/sd0_20260414_174456_sacbc_antsoccer-arena-navigate-singletask-task1-v0_a3.0/eval.csv
 
 q2 best-task plot logs:
   exp/q2/sd0_20260411_102334_iql_cube-single-play-singletask-task1-v0_a10.0_e0.9_a3.0/eval.csv
   exp/q2/sd0_20260409_201841_iql_antsoccer-arena-navigate-singletask-task1-v0_a10.0_e0.9_a10.0/eval.csv
 
 q3 best-task plot logs:
-  exp/q3/sd0_20260410_095754_fql_cube-single-play-singletask-task1-v0_a1.0_a1.0/eval.csv
-  exp/q3/sd0_20260410_202445_fql_antsoccer-arena-navigate-singletask-task1-v0_a1.0_a1.0/eval.csv
+  exp/q3/sd0_20260414_174506_fql_cube-single-play-singletask-task1-v0_a1.0_a100.0/eval.csv
+  exp/q3/sd0_20260414_174516_fql_antsoccer-arena-navigate-singletask-task1-v0_a1.0_a3.0/eval.csv
 
 q1 alpha-sweep plot logs:
   exp/q1/sd0_20260411_102320_sacbc_cube-single-play-singletask-task1-v0_a100.0/eval.csv
