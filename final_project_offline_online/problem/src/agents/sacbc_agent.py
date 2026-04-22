@@ -98,7 +98,9 @@ class SACBCAgent(nn.Module):
         mses = torch.mean((actor_actions - actions) ** 2, dim=-1)
         bc_loss = self.alpha * mses.mean()
 
-        entropy_loss = self.beta() * actor_dists.log_prob(actor_actions).mean()
+        # Match the corrected HW5 implementation: beta should only be updated by
+        # update_beta, not indirectly through the actor objective.
+        entropy_loss = self.beta().detach() * actor_dists.log_prob(actor_actions).mean()
 
         loss = q_loss + bc_loss + entropy_loss
 

@@ -70,7 +70,6 @@ class FQLAgent(nn.Module):
             )
             velocity = self.bc_actor(observation, action, t)
             action = action + dt * velocity
-        action = torch.clamp(action, -1, 1)
         return action
 
     @ptu.maybe_compile
