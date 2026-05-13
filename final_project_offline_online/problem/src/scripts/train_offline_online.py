@@ -214,8 +214,20 @@ def setup_arguments(args=None):
     # QSM
     parser.add_argument("--inv_temp", type=float, default=None)
 
+    # Custom method
+    parser.add_argument("--num_action_samples", type=int, default=None)
+    parser.add_argument("--target_num_action_samples", type=int, default=None)
+    parser.add_argument("--online_update_actor", action="store_true")
+
     # DSRL
     parser.add_argument("--noise_scale", type=float, default=None)
+    parser.add_argument("--use_prior_policy", action="store_true")
+
+    # Architecture / optimization knobs for debugging sweeps.
+    parser.add_argument("--hidden_size", type=int, default=None)
+    parser.add_argument("--num_layers", type=int, default=None)
+    parser.add_argument("--learning_rate", type=float, default=None)
+    parser.add_argument("--flow_steps", type=int, default=None)
 
     # For njobs mode (optional)
     parser.add_argument("--njobs", type=int, default=None)
@@ -234,7 +246,19 @@ def main(args):
     # Create directory for logging
     logdir_prefix = "exp"  # Keep for autograder
 
-    config = configs.configs[args.base_config](args.env_name)
+    config_kwargs = {}
+    if args.hidden_size is not None:
+        config_kwargs["hidden_size"] = args.hidden_size
+    if args.num_layers is not None:
+        config_kwargs["num_layers"] = args.num_layers
+    if args.learning_rate is not None:
+        config_kwargs["learning_rate"] = args.learning_rate
+    if args.flow_steps is not None:
+        config_kwargs["flow_steps"] = args.flow_steps
+    if args.use_prior_policy:
+        config_kwargs["use_prior_policy"] = True
+
+    config = configs.configs[args.base_config](args.env_name, **config_kwargs)
 
     # Set common config values from args for autograder
     config['seed'] = args.seed
@@ -260,9 +284,31 @@ def main(args):
     if args.inv_temp is not None:
         config['agent_kwargs']['inv_temp'] = args.inv_temp
         exp_name = f"{exp_name}_i{args.inv_temp}"
+    if args.num_action_samples is not None:
+        config['agent_kwargs']['num_action_samples'] = args.num_action_samples
+        exp_name = f"{exp_name}_ns{args.num_action_samples}"
+    if args.target_num_action_samples is not None:
+        config['agent_kwargs']['target_num_action_samples'] = args.target_num_action_samples
+        exp_name = f"{exp_name}_tns{args.target_num_action_samples}"
+    if 'online_start_step' in config['agent_kwargs']:
+        config['agent_kwargs']['online_start_step'] = args.offline_training_steps
+    if args.online_update_actor and 'freeze_actor_online' in config['agent_kwargs']:
+        config['agent_kwargs']['freeze_actor_online'] = False
+        exp_name = f"{exp_name}_onlineactor"
     if args.noise_scale is not None:
         config['agent_kwargs']['noise_scale'] = args.noise_scale
         exp_name = f"{exp_name}_n{args.noise_scale}"
+    if args.use_prior_policy:
+        config['agent_kwargs']['use_prior_policy'] = True
+        exp_name = f"{exp_name}_prior"
+    if args.flow_steps is not None:
+        exp_name = f"{exp_name}_fs{args.flow_steps}"
+    if args.learning_rate is not None:
+        exp_name = f"{exp_name}_lr{args.learning_rate:g}"
+    if args.hidden_size is not None:
+        exp_name = f"{exp_name}_hs{args.hidden_size}"
+    if args.num_layers is not None:
+        exp_name = f"{exp_name}_nl{args.num_layers}"
     if args.offline_data > 0:
         exp_name = f"{exp_name}_od{args.offline_data:g}"
     if args.wsrl_steps > 0:

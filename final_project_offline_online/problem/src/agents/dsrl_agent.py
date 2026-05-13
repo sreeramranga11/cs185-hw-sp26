@@ -28,6 +28,7 @@ class DSRLAgent(nn.Module):
         target_update_rate: float,
         flow_steps: int,
         noise_scale: float = 1.0,
+        use_prior_policy: bool = False,
 
         online_training: bool = False,
     ):
@@ -38,6 +39,7 @@ class DSRLAgent(nn.Module):
         self.target_update_rate = target_update_rate
         self.flow_steps = flow_steps
         self.noise_scale = noise_scale
+        self.use_prior_policy = use_prior_policy
         self.target_entropy = -action_dim
 
         self.bc_flow_actor = make_bc_flow_actor(observation_shape, action_dim)
@@ -65,9 +67,14 @@ class DSRLAgent(nn.Module):
     def alpha(self):
         return self.log_alpha()
 
-    def sample_flow_actions(self, observations: torch.Tensor, noises: torch.Tensor) -> torch.Tensor:
+    def sample_flow_actions(
+        self,
+        observations: torch.Tensor,
+        noises: torch.Tensor,
+        use_target_actor: bool = False,
+    ) -> torch.Tensor:
         """Euler integration of BC flow from t=0 to t=1."""
-        actor = self.target_bc_flow_actor
+        actor = self.target_bc_flow_actor if use_target_actor else self.bc_flow_actor
         action = noises
         dt = 1.0 / float(self.flow_steps)
         for k in range(self.flow_steps):
@@ -84,7 +91,15 @@ class DSRLAgent(nn.Module):
     @torch.no_grad()
     def sample_actions(self, observations: torch.Tensor) -> torch.Tensor:
         """Sample actions using noise policy for noise input to BC flow policy."""
-        z = self.noise_actor(observations).rsample()
+        if self.use_prior_policy:
+            z = torch.randn(
+                observations.shape[0],
+                self.action_dim,
+                device=observations.device,
+                dtype=observations.dtype,
+            )
+        else:
+            z = self.noise_actor(observations).rsample()
         scaled_z = self.noise_scale * z
         return self.sample_flow_actions(observations, scaled_z)
     
@@ -106,7 +121,11 @@ class DSRLAgent(nn.Module):
         q = self.critic(observations, actions)
         with torch.no_grad():
             next_z = self.noise_actor(next_observations).rsample()
-            next_actions = self.sample_flow_actions(next_observations, self.noise_scale * next_z)
+            next_actions = self.sample_flow_actions(
+                next_observations,
+                self.noise_scale * next_z,
+                use_target_actor=True,
+            )
             next_q = self.target_critic(next_observations, next_actions).mean(dim=0)
             target_q = rewards + self.discount * (1.0 - dones.float()) * next_q
         loss = torch.mean((q - target_q[None]) ** 2)
@@ -192,7 +211,7 @@ class DSRLAgent(nn.Module):
         dist = self.noise_actor(observations)
         z = dist.rsample()
         log_prob = dist.log_prob(z)
-        loss = -(self.alpha * (log_prob.detach() + self.target_entropy)).mean()
+        loss = -(self.log_alpha.log_param * (log_prob.detach() + self.target_entropy)).mean()
 
         self.alpha_optimizer.zero_grad()
         loss.backward()
